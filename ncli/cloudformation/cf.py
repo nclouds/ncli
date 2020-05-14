@@ -32,16 +32,16 @@ def common_params(func):
         global yaml_configs 
 
         yaml_configs = _loadYamlFile('.config')
-        kwargs['region'] = kwargs['region'] or _getConfiguration('region', kwargs['env'])
+        kwargs['region'] = kwargs['region'] or _getConfiguration('region', kwargs['env'], required=True)
         kwargs['profile'] = kwargs['profile'] or _getConfiguration('profile', kwargs['env'])
-        kwargs['bucket'] = _getConfiguration('bucket', kwargs['env'])
+        kwargs['bucket'] = _getConfiguration('bucket', kwargs['env'], required=True)
         kwargs['parameters'] = _getConfiguration('parameters_file', kwargs['env']) or '{}.json'.format(kwargs['env'])
         kwargs['multi_region'] = _getConfiguration('multi_region', kwargs['env'])
         if kwargs['multi_region'] == True:
             kwargs['bucket'] += '-' + kwargs['region']
 
         kwargs['base_stack_name'] = _getConfiguration('stack_name', kwargs['env'])
-        kwargs['stack_name'] = '{}-{}'.format(kwargs['base_stack_name'], kwargs['env'])
+        kwargs['stack_name'] = '{}-{}'.format(kwargs['base_stack_name'], kwargs['env'], required=True)
 
         kwargs['extra_args'] = list(kwargs['extra_args'])
 
@@ -328,8 +328,12 @@ def _loadJsonFile(file_name):
         print(ex)
         exit(1)
 
-def _getConfiguration(property, env):
-    return yaml_configs.get(env, {}).get(property) or yaml_configs.get('global', {}).get(property)
+def _getConfiguration(property, env, required=False):
+    config = yaml_configs.get(env, {}).get(property) or yaml_configs.get('global', {}).get(property)
+    if required == True and config == None:
+        click.echo(click.style('"{}" missing in config file'.format(property), fg='red'))
+        exit(1)
+    return config
 
 # def _getRegionProfileString(region, profile):
 #     return ([ '--region', region ] if region != None else []) + ([ '--profile', profile ] if profile != None else [])
