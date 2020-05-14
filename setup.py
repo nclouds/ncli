@@ -8,7 +8,8 @@ setup(
         'Click',
         'boto3',
         'PyYAML',
-        'colorama'
+        'colorama',
+        'pyperclip'
     ],
     entry_points='''
         [console_scripts]

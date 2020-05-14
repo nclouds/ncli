@@ -7,6 +7,8 @@ from .cloudformation.cf import cf
 
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 
+__version__ = '1.0.1'
+
 # def _secure_constructor(loader, node):
 #     print(loader)
 #     print(isinstance(node, yaml.nodes.SequenceNode))
@@ -24,6 +26,7 @@ def common_params(func):
     return wrapper
 
 @click.group(context_settings=CONTEXT_SETTINGS)
+@click.version_option(__version__)
 @common_params
 @click.pass_context
 def ncli(ctx, region, profile):

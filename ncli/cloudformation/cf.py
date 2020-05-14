@@ -6,11 +6,17 @@ import json
 import subprocess
 import botocore.exceptions
 import os.path
+import pyperclip
+from botocore import UNSIGNED
+from botocore.client import Config
 
 from .colors import colors
+import textwrap
 
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 
+# Constants
+templates_bucket = 'nclouds-cloudformation-templates'
 session = {}
 yaml_configs = {}
 
@@ -18,7 +24,7 @@ def common_params(func):
     @click.option('--region', 'region', help="AWS region")
     @click.option('--profile', 'profile', help="AWS profile name")
     @click.option('-e', '--environment', 'env', default='dev', show_default=True, help="The environment for the stack")
-    @click.argument('location', default='.')
+    @click.argument('location', default='.', type=click.Path(exists=True))
     @click.argument('extra-args', nargs=-1)
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -57,7 +63,7 @@ def sync(**kwargs):
     """Sync CloudFormation templates to S3 bucket"""
 
     key = kwargs['stack_name'] + '/' + kwargs['env']
-    command = ['aws', 's3', 'sync', '.', 's3://{bucket}/{key}'.format(bucket=kwargs['bucket'], key=key) ,'--exclude', '*', '--include', '*.yml', '--acl', 'bucket-owner-full-control']
+    command = ['aws', 's3', 'sync', kwargs['location'], 's3://{bucket}/{key}'.format(bucket=kwargs['bucket'], key=key) ,'--exclude', '*', '--include', '*.yml', '--acl', 'bucket-owner-full-control']
 
     _printInfo(Bucket=kwargs['bucket'], Key=key)
     _executeAwsCliCommand(command, kwargs)
@@ -145,45 +151,89 @@ def info(**kwargs):
     key = kwargs['stack_name'] + '/' + kwargs['env']
     _printInfo(Stack=kwargs['stack_name'], Environment=kwargs['env'], Region=kwargs['region'], Bucket=kwargs['bucket'], Key=key)
 
-@cf.command("list-templates")
+@cf.command("list-templates", short_help='List available templates')
 def list_templates(**kwargs):
     """List available templates from the nClouds CloudFormation repository"""
-    s3 = boto3.resource('s3')
-    bucket = s3.Bucket('nclouds-cloudformation-templates')
+    s3 = boto3.resource('s3', config=Config(signature_version=UNSIGNED))
+    bucket = s3.Bucket(templates_bucket)
 
-    click.echo(click.style('Available templates:' , fg='blue'))
-    for obj in bucket.objects.filter(Prefix='templates'):
-        if ".yml" in obj.key:
-            click.echo(obj.key.replace("templates/", ""))
+    try:
+        templates_metadata = yaml.safe_load(bucket.Object('meta/templates.yml').get()['Body'].read())
+        click.echo(click.style('Available templates:' , fg='blue'))
 
-@cf.command("get-templates")
-@click.argument('files', nargs=-1)
-def get_templates(files):
+        for key, template in templates_metadata.items():
+            click.echo('○ {} - {}'.format(key.ljust(20,' '), _fill_with_padding(template['short-description'], width=75, padding=25)))
+    except Exception as ex:
+        print(ex)
+        click.echo(click.style('Templates are not available at this moment' , fg='yellow'))
+
+@cf.command("list-examples", short_help='List available examples')
+def list_examples(**kwargs):
+    """List available examples from the nClouds CloudFormation repository"""
+    s3 = boto3.resource('s3', config=Config(signature_version=UNSIGNED))
+    bucket = s3.Bucket(templates_bucket)
+
+    try:
+        examples_metadata = yaml.safe_load(bucket.Object('meta/examples.yml').get()['Body'].read())
+        click.echo(click.style('Available examples:' , fg='blue'))
+
+        for key, template in examples_metadata.items():
+            click.echo('○ {} - {}'.format(key.ljust(20,' '), _fill_with_padding(template['short-description'], width=75, padding=25)))
+    except Exception as ex:
+        print(ex)
+        click.echo(click.style('Examples are not available at this moment' , fg='yellow'))
+
+@cf.command("get-templates", short_help='Download templates from repository')
+@click.option('-s', '--snippet', 'snippet', is_flag=True, help="Copy master stack snippet to the clipboard")
+@click.option('-o', '--overwrite', 'overwrite', is_flag=True, help="Overwrite template if it already exists")
+@click.argument('templates', nargs=-1)
+def get_templates(templates, snippet, overwrite):
     """Download templates from the nClouds CloudFormation repository"""
-    s3 = boto3.resource('s3')
-    bucket = s3.Bucket('nclouds-cloudformation-templates')
+    s3 = boto3.resource('s3', config=Config(signature_version=UNSIGNED))
+    bucket = s3.Bucket(templates_bucket)
 
-    click.echo(click.style('Downloading files...' , fg='blue'))
-    if not os.path.exists('templates'):
-        os.makedirs('templates')
-    for file in files:
-        try:
-            obj = bucket.Object('templates/' + file)
-            obj.download_file(obj.key)
-            click.echo(obj.key + " created")
-        except botocore.exceptions.ClientError as ex:
-            click.echo(click.style('The template {} doesn\'t exist in the nClouds CloudFormation repository'.format(file) , fg='red'))
-            exit(1)
+    try:
+        templates_metadata = yaml.safe_load(bucket.Object('meta/templates.yml').get()['Body'].read())
+        click.echo(click.style('Downloading templates...' , fg='blue'))
+
+        if not os.path.exists('templates'):
+            os.makedirs('templates')
+
+        master_snippet = ''
+        for template in templates:
+            obj = bucket.Object('templates/' + templates_metadata[template]['file'])
+            if os.path.isfile(obj.key) and overwrite:
+                obj.download_file(obj.key)
+                click.echo(obj.key + " overwritten")
+            elif os.path.isfile(obj.key):
+                click.echo(obj.key + " skipped")
+            else:
+                obj.download_file(obj.key)
+                click.echo(obj.key + " created")
+
+            master_snippet += templates_metadata[template]['master-snippet']
         
+        if snippet:
+            pyperclip.copy(master_snippet)
+            click.echo(click.style('Master template snippet copied to clipboard!' , fg='green'))
+    except KeyError as ex:
+        click.echo(click.style('The template {} doesn\'t exist in nClouds CloudFormation repository'.format(template) , fg='red'))
+    except botocore.exceptions.ClientError as ex:
+        click.echo(click.style('Templates are not available at this moment' , fg='yellow'))
+    except Exception as ex:
+        print(ex)
+        exit(1)
 
-@cf.command()
-@click.option('--from', 'from_project', default='None', prompt="Enter the nClouds CloudFormation sample project name to start from", show_default=True, help="nClouds CloudFormation example project")
+@cf.command(short_help='Initialize project to use with the cli')
+@click.option('--from', 'from_project', default='None', prompt="Enter the nClouds CloudFormation sample project name to start from", show_default=True, help="nClouds CloudFormation sample project")
 @click.option('--stack-name', 'stack_name', prompt="Enter the Stack name for the project", help="Stack name for the project")
 @click.option('--bucket', 'bucket_name', prompt="Enter the S3 bucket name for the templates", help="S3 bucket name for the templates")
-def init(from_project, stack_name, bucket_name):
-    """Download complete example from the nClouds CloudFormation repository"""
-    s3 = boto3.resource('s3')
-    bucket = s3.Bucket('nclouds-cloudformation-templates')
+@click.option('--region', 'region', prompt="Enter the AWS region for the CloudFormation Stack", help="AWS region for the CloudFormation Stack")
+def init(from_project, stack_name, bucket_name, region):
+    """Initialize a new project within the current directory by creating a .config file,
+    optionally initialize project using a nClouds sample project"""
+    s3 = boto3.resource('s3', config=Config(signature_version=UNSIGNED))
+    bucket = s3.Bucket(templates_bucket)
 
     if os.path.isfile('.config'):
         click.echo(click.style('The current project is already initialized' , fg='red'))
@@ -192,16 +242,21 @@ def init(from_project, stack_name, bucket_name):
     data = {
         "global": {
             "stack_name": stack_name,
-            "bucket": bucket_name
+            "bucket": bucket_name,
+            "region": region
         }
     }
 
     if from_project != 'None':
          # TODO create a metadata file in the repository with the available examples
-        if from_project.lower() not in ['ecr']:
-            click.echo(click.style('The project {} doesn\'t exists in nClouds sample projects repostory'.format(from_project) , fg='red'))
-            exit(1)
-        click.echo(click.style('Initializing project with \'{}\' sample ...'.format(from_project), fg='blue'))
+        try:
+            templates_metadata = yaml.safe_load(bucket.Object('meta/examples.yml').get()['Body'].read())
+            if from_project.lower() not in templates_metadata:
+                click.echo(click.style('The example {} doesn\'t exists in nClouds sample projects repostory'.format(from_project) , fg='red'))
+                exit(1)
+            click.echo(click.style('Initializing project with \'{}\' sample ...'.format(from_project), fg='blue'))
+        except botocore.exceptions.ClientError as ex:
+            click.echo(click.style('Templates are not available at this moment' , fg='yellow'))
     else:
         click.echo(click.style('Initializing project with config file', fg='blue'))
     
@@ -237,6 +292,12 @@ def init(from_project, stack_name, bucket_name):
 
 
 # ############################### Helper Methods ###############################
+
+def _fill_with_padding(text, width=25, padding=20):
+    text = textwrap.wrap(text, width=width)
+    for i in range(1, len(text)):
+        text[i] = " " * 25 + text[i]
+    return "\n".join(text)
 
 def _printInfo(nl=True, **kwargs):
     message = ''
@@ -291,3 +352,75 @@ def _executeShellCommand(command):
     #             # click.echo(output.strip())
     #             pass
     #         break
+
+
+
+
+
+class SafeUnknownConstructor(yaml.constructor.SafeConstructor):
+    def __init__(self):
+        yaml.constructor.SafeConstructor.__init__(self)
+
+    def construct_undefined(self, node):
+        data = getattr(self, 'construct_' + node.id)(node)
+        datatype = type(data)
+        wraptype = type('TagWrap_'+datatype.__name__, (datatype,), {})
+        wrapdata = wraptype(data)
+        wrapdata.tag = lambda: None
+        wrapdata.datatype = lambda: None
+        setattr(wrapdata, "wrapTag", node.tag)
+        setattr(wrapdata, "wrapType", datatype)
+        return wrapdata
+
+
+class SafeUnknownLoader(SafeUnknownConstructor, yaml.loader.SafeLoader):
+
+    def __init__(self, stream):
+        SafeUnknownConstructor.__init__(self)
+        yaml.loader.SafeLoader.__init__(self, stream)
+
+
+class SafeUnknownRepresenter(yaml.representer.SafeRepresenter):
+    def represent_data(self, wrapdata):
+        tag = False
+        if type(wrapdata).__name__.startswith('TagWrap_'):
+            datatype = getattr(wrapdata, "wrapType")
+            tag = getattr(wrapdata, "wrapTag")
+            data = datatype(wrapdata)
+        else:
+            data = wrapdata
+        node = super(SafeUnknownRepresenter, self).represent_data(data)
+        if tag:
+            node.tag = tag
+        return node
+
+class SafeUnknownDumper(SafeUnknownRepresenter, yaml.dumper.SafeDumper):
+
+    def __init__(self, stream,
+            default_style=None, default_flow_style=False,
+            canonical=None, indent=None, width=None,
+            allow_unicode=None, line_break=None,
+            encoding=None, explicit_start=None, explicit_end=None,
+            version=None, tags=None, sort_keys=True):
+
+        SafeUnknownRepresenter.__init__(self, default_style=default_style,
+                default_flow_style=default_flow_style, sort_keys=sort_keys)
+
+        yaml.dumper.SafeDumper.__init__(self,  stream,
+                                        default_style=default_style,
+                                        default_flow_style=default_flow_style,
+                                        canonical=canonical,
+                                        indent=indent,
+                                        width=width,
+                                        allow_unicode=allow_unicode,
+                                        line_break=line_break,
+                                        encoding=encoding,
+                                        explicit_start=explicit_start,
+                                        explicit_end=explicit_end,
+                                        version=version,
+                                        tags=tags,
+                                        sort_keys=sort_keys)
+
+
+MySafeLoader = SafeUnknownLoader
+yaml.constructor.SafeConstructor.add_constructor(None, SafeUnknownConstructor.construct_undefined)
