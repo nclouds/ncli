@@ -7,7 +7,7 @@ This repository contains command line utilities that streamline the process of w
 The CLI requires python3.6+ installed
 
 ```console
-$ pip install git+ssh://git@github.com/ronaldour/ncli.git
+$ pip install git+ssh://git@github.com/nclouds/ncli.git
 ```
 
 ## Usage
@@ -22,7 +22,7 @@ $ ncli --help
 
 ### CloudFormation
 
-This module is just a thin wrapper over the AWS CLI for some of the CloudFormation commands. Using the AWS CLI speeds up de process of managing infrastructur with CloudFormation, but sometimes those commands get quite large and some arguments are repetitive within the same project, so the `ncli cf` tool runs *aws cli* commands with some default arguments based on some standards and settings from a configuration file. *For more information about nClouds CloudFormation standards click [here](https://github.com/ronaldour/cloudformation-templates/blob/master/standards.md)
+This module is just a thin wrapper over the AWS CLI for some of the CloudFormation commands. Using the AWS CLI speeds up de process of managing infrastructur with CloudFormation, but sometimes those commands get quite large and some arguments are repetitive within the same project, so the `ncli cf` tool runs *aws cli* commands with some default arguments based on some standards and settings from a configuration file. *For more information about nClouds CloudFormation standards click [here](https://github.com/nclouds/cloudformation/blob/master/standards.md)
 
 ```console
 $ ncli cf --help
@@ -70,7 +70,7 @@ dev: # You can override any of the above settings for each of the environments t
   region: us-west-2
 ```
 
-The following conventions are used (sticking to the nClouds [CloudFormation standards](https://github.com/ronaldour/cloudformation-templates/blob/master/standards.md)):
+The following conventions are used (sticking to the nClouds [CloudFormation standards](https://github.com/nclouds/cloudformation/blob/master/standards.md)):
 
 1. The Stack name is going to be composed of the base name in the configuration file and the environment: `<stack_name>-<environment>`
 2. The tool is going to look for a `master.yml` in the current directory, althought those values can be overriden by the `--filename` and the `LOCATION` argument
