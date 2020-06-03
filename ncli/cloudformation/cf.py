@@ -31,17 +31,17 @@ def common_params(func):
         global session
         global yaml_configs 
 
-        yaml_configs = _loadYamlFile('.config')
+        yaml_configs = _loadYamlFile(kwargs['location'] + '/' + '.config')
+        kwargs['base_stack_name'] = _getConfiguration('stack_name', kwargs['env'])
+        kwargs['stack_name'] = '{}-{}'.format(kwargs['base_stack_name'], kwargs['env'], required=True)
         kwargs['region'] = kwargs['region'] or _getConfiguration('region', kwargs['env'], required=True)
         kwargs['profile'] = kwargs['profile'] or _getConfiguration('profile', kwargs['env'])
         kwargs['bucket'] = _getConfiguration('bucket', kwargs['env'], required=True)
+        kwargs['key_prefix'] = (_getConfiguration('key_prefix', kwargs['env'], required=False) or kwargs['base_stack_name']) + '/' + kwargs['env']
         kwargs['parameters'] = _getConfiguration('parameters_file', kwargs['env']) or '{}.json'.format(kwargs['env'])
         kwargs['multi_region'] = _getConfiguration('multi_region', kwargs['env'])
         if kwargs['multi_region'] == True:
             kwargs['bucket'] += '-' + kwargs['region']
-
-        kwargs['base_stack_name'] = _getConfiguration('stack_name', kwargs['env'])
-        kwargs['stack_name'] = '{}-{}'.format(kwargs['base_stack_name'], kwargs['env'], required=True)
 
         kwargs['extra_args'] = list(kwargs['extra_args'])
 
@@ -62,10 +62,9 @@ def cf(ctx):
 def sync(**kwargs):
     """Sync CloudFormation templates to S3 bucket"""
 
-    key = kwargs['stack_name'] + '/' + kwargs['env']
-    command = ['aws', 's3', 'sync', kwargs['location'], 's3://{bucket}/{key}'.format(bucket=kwargs['bucket'], key=key) ,'--exclude', '*', '--include', '*.yml', '--acl', 'bucket-owner-full-control']
+    command = ['aws', 's3', 'sync', kwargs['location'], 's3://{bucket}/{key}'.format(bucket=kwargs['bucket'], key=kwargs['key_prefix']) ,'--exclude', '*', '--include', '*.yml', '--acl', 'bucket-owner-full-control']
 
-    _printInfo(Bucket=kwargs['bucket'], Key=key)
+    _printInfo(Bucket=kwargs['bucket'], Key=kwargs['key_prefix'])
     _executeAwsCliCommand(command, kwargs)
 
 @cf.command()
@@ -99,7 +98,7 @@ def create(**kwargs):
 def update(**kwargs):
     """Update CloudFormation Stack"""
 
-    command = ['aws', 'cloudformation', 'update-stack', '--stack-name', kwargs['stack_name'], '--template-body', 'file://{}/{}'.format(kwargs['location'], kwargs['filename']), '--parameters', 'file://{}/{}'.format(kwargs['location'], kwargs['parameters']), '--capabilities', 'CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND']
+    command = ['aws', 'cloudformation', 'update-stack', '--stack-name', kwargs['stack_name'], '--template-body', 'file://{}/{}'.format(kwargs['location'], kwargs['filename']), '--parameters', 'file://{}/{}'.format(kwargs['location'], kwargs['parameters']), '--capabilities', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND']
 
     _printInfo(Stack=kwargs['stack_name'], Environment=kwargs['env'], Region=kwargs['region'], Bucket=kwargs['bucket'])
     _executeAwsCliCommand(command, kwargs)
@@ -125,7 +124,7 @@ def delete(**kwargs):
 
     command = ['aws', 'cloudformation', 'delete-stack', '--stack-name', kwargs['stack_name']]
 
-    if click.confirm(click.style('Are you sure you want to delete the stack: {}'.format(kwargs['stack_name']), fg='yellow')):
+    if click.confirm(click.style('Are you sure you want to delete the stack: {} in {}'.format(kwargs['stack_name'], kwargs['region']), fg='yellow')):
         _printInfo(Stack=kwargs['stack_name'], Environment=kwargs['env'], Region=kwargs['region'], Bucket=kwargs['bucket'])
         _executeAwsCliCommand(command, kwargs)
         click.echo(click.style('The stack is being deleted', fg='blue'))
@@ -148,8 +147,7 @@ def delete(**kwargs):
 @click.option('-f', '--filename', 'filename', default='master.yml', show_default=True, help="File name of the master template")
 def info(**kwargs):
     """Print settings used by the CLI"""
-    key = kwargs['stack_name'] + '/' + kwargs['env']
-    _printInfo(Stack=kwargs['stack_name'], Environment=kwargs['env'], Region=kwargs['region'], Bucket=kwargs['bucket'], Key=key)
+    _printInfo(Stack=kwargs['stack_name'], Environment=kwargs['env'], Region=kwargs['region'], Bucket=kwargs['bucket'], Key=kwargs['key_prefix'])
 
 @cf.command("list-templates", short_help='List available templates')
 def list_templates(**kwargs):
@@ -344,7 +342,9 @@ def _executeAwsCliCommand(command, kwargs):
 
 def _executeShellCommand(command):
     process = subprocess.Popen(command, universal_newlines=True)
-    process.communicate()
+    process.communicate()[0]
+    if process.returncode != 0:
+        exit(1)
 
     # while True:
     #     output = process.stdout.readline()
